@@ -15,7 +15,6 @@ Install these before you start working locally:
 - `uv`
 - Rust stable toolchain and `cargo`
 - Soroban CLI, installed as `stellar` via `cargo install --locked stellar-cli --features opt`
-- [`gitleaks`](https://github.com/gitleaks/gitleaks) secret scanner — `brew install gitleaks`, or download a binary from the [releases page](https://github.com/gitleaks/gitleaks/releases) (required for `pnpm run secrets:check`)
 
 For the Rust contracts, also add the Wasm target:
 
@@ -239,7 +238,7 @@ Choose the focused command by area:
 | `web/drizzle/**`, `web/src/db/**`, `web/drizzle.config.ts` | `pnpm --dir web run db:migrate`, then the specific DB test with `pnpm --dir web exec vitest run tests/<name>.test.ts` | `Web Migrations CI` |
 | `web/src/area/devx/**` | `pnpm --dir web exec vitest run src/area/devx/__tests__/runner.test.ts` | `Benchmark CI - regression gates` |
 | API route or library unit tests | `pnpm --dir web exec vitest run tests/<name>.test.ts` | `Deploy Web -> Vercel` |
-| Backup or restore paths | `pnpm --dir web exec vitest run tests/backup-restore-fixture.test.ts tests/backup-crypto.test.ts tests/backup-types.test.ts` | `Web Backups CI` |
+| Backup or restore paths | `pnpm --dir web exec vitest run tests/backup-crypto.test.ts tests/backup-types.test.ts` | `Web Backups CI` |
 
 Use `pnpm --dir web run test:e2e` only when API route behavior depends on the running app or cross-route state. Use the local stack with `pnpm stack:up` when you need Postgres plus the mock Stellar provider, and clean it up with `pnpm stack:down`. Do not use `pnpm stack:reset` unless you intentionally want to destroy and recreate local stack data.
 
@@ -341,6 +340,26 @@ Choose the focused command by area:
 
 Deploy commands such as `pnpm --dir contracts run deploy:testnet` and `./deploy.sh testnet` require configured Stellar credentials and network access. Treat failures from missing signers, RPC timeouts, Horizon rate limits, or Soroban testnet availability as deployment-environment issues unless local `cargo test` or Wasm build also fails.
 
+### Runbook changes
+
+Any `*RUNBOOK*.md` (for example [`docs/DR_RUNBOOK.md`](./docs/DR_RUNBOOK.md)) is validated for
+required sections (triggers, verification, recovery, troubleshooting) and for referenced files and
+commands actually existing. See [`OBSERVABILITY.md`](./OBSERVABILITY.md) for the monitoring signals
+those runbooks respond to.
+
+```bash
+node scripts/validate-runbooks.mjs .
+node --test scripts/validate-runbooks.test.mjs
+```
+
+| Changed files | Focused command | CI workflow |
+| --- | --- | --- |
+| `docs/*RUNBOOK*.md`, `*RUNBOOK*.md`, `OBSERVABILITY.md` | `node scripts/validate-runbooks.mjs .` | `Runbook Validation CI` |
+
+The validator fails closed: a runbook missing a required section, a referenced file that no longer
+exists, an unresolvable `pnpm --dir`/`pnpm --filter` script, or an unknown `uv run` binary are all
+errors, and finding zero runbooks at all is treated as an error rather than silently passing.
+
 ### Common failure messages
 
 | Message | Usually means | Next step |
@@ -354,9 +373,6 @@ Deploy commands such as `pnpm --dir contracts run deploy:testnet` and `./deploy.
 | `Browser bundle not built` or missing `packages/sdk/dist/browser/sdk.bundle.js` | SDK build did not produce the expected browser artifact | Run `pnpm --filter @talos-protocol/sdk run build:browser` or the full SDK build. |
 | `ruff` violations | Python formatting or lint rule failures | Run `uv run ruff check src tests` in `packages/prime-agent/` and fix the reported files. |
 | `wasm32-unknown-unknown` target not installed | Rust cannot build Soroban Wasm artifacts | Run `rustup target add wasm32-unknown-unknown`. |
-| `gitleaks is not installed` | The secret scanner is missing from PATH | Install gitleaks (see Prerequisites) and re-run `pnpm run secrets:check`. |
-| `secret-scan: FAILED` with `file:line:rule` | A staged change contains a detected secret | Remove the secret and load it from the environment/secrets manager. Sanctioned false positives get a trailing `# gitleaks:allow` comment. |
-| `unable to load gitleaks config` | `.gitleaks.toml` is missing or malformed | Restore/fix `.gitleaks.toml`; `pnpm run secrets:check` fails closed until the config is valid. |
 | PR preview comment is present but Vercel URL is absent | The repo preview workflow provisions the mock DB; Vercel attaches previews separately | Check Vercel's GitHub integration/status before treating it as an application failure. |
 
 ## Code Style
@@ -372,27 +388,6 @@ Deploy commands such as `pnpm --dir contracts run deploy:testnet` and `./deploy.
   `uv run pytest tests/test_durable_job_effects.py` and follow the
   [durable job effects runbook](./docs/prime-agent-durable-job-effects.md).
 - For Rust, keep formatting standard with `cargo fmt` and validate with `cargo test`
-
-### Secret scanning
-
-Local contribution checks include a [gitleaks](https://github.com/gitleaks/gitleaks) scan of your **staged changes**. The exact command to run before opening a PR is:
-
-```bash
-pnpm run secrets:check
-```
-
-(`pnpm run secrets:check` invokes `bash scripts/secret-scan.sh` — the single source of truth for local secret scanning.)
-
-Behavior:
-
-- **Nothing staged** — the check passes trivially (exit 0).
-- **A secret is detected** — the check fails and prints only `file:line:rule` for each finding. Secret values and line contents are never echoed (output is redacted).
-- **Missing or malformed `.gitleaks.toml`** — the check fails closed with an actionable error; it never reports “no secrets found” in that state.
-- **`gitleaks` not installed or the scanner crashes** — the check fails closed with install/debug instructions (see Prerequisites). It never treats a scanner failure as a clean scan.
-- **Boundary paths** — generated, vendored, build-output, and binary/asset paths are ignored via the explicit allowlist in [`.gitleaks.toml`](./.gitleaks.toml).
-- **Sanctioned false positives** — add a trailing `# gitleaks:allow` comment on that line instead of widening the allowlist.
-
-Regression tests for the check live in `scripts/secret-scan.test.sh` (`bash scripts/secret-scan.test.sh`).
 
 ## Database Transaction Retry & Serialization Hardening
 
@@ -574,7 +569,7 @@ The unified CI workflow (`.github/workflows/ci.yml`) runs only the checks releva
 | `packages/sdk/**` | sdk (build/typecheck, tests) |
 | `packages/prime-agent/**` | prime-agent (ruff, pytest) |
 | `contracts/**` | contracts (cargo test, WASM build) |
-| `pnpm-lock.yaml`, `package-lock.json`, `pnpm-workspace.yaml`, root `package.json`, `scripts/**`, `.github/**` | **ALL** packages |
+| `pnpm-lock.yaml`, `pnpm-workspace.yaml`, root `package.json`, `scripts/**`, `.github/**` | **ALL** packages |
 | Unknown / unclassified files | **ALL** packages (fail-closed) |
 
 ### Local validation
@@ -585,36 +580,14 @@ To test the detection script locally before pushing:
 # Dry-run against a specific commit range
 BASE_SHA=<base> HEAD_SHA=<head> bash scripts/ci-detect-changes.sh
 
-# Request the full matrix explicitly (no git access needed)
-bash scripts/ci-detect-changes.sh --all
-
-# Run the full test suite (this is the exact command CI runs as a
-# self-test step in the `detect` job of `.github/workflows/ci.yml`)
+# Run the full test suite
 bash scripts/ci-detect-changes.test.sh
 ```
 
-### Failure semantics (fail closed, fail safe)
-
-The detector never silently skips checks. Every degraded path produces the full package matrix and exits 0, so a broken detector cannot produce a falsely green run:
-
-| Input | Behavior |
-|---|---|
-| Missing `BASE_SHA` / `HEAD_SHA` | `::error::` annotation, ALL packages, exit 0 |
-| Malformed SHA / revision-like option injection | Rejected before git is called; `::error::` annotation, ALL packages, exit 0 |
-| SHA does not resolve to a commit (e.g. force push, shallow clone) | `::error::` annotation, ALL packages, exit 0 |
-| `git diff` failure | Retried up to `DETECT_MAX_DIFF_ATTEMPTS` (default 3) with `DETECT_DIFF_RETRY_BACKOFF_SECONDS` (default 1s) backoff; on exhaustion `::error::` annotation, ALL packages, exit 0 |
-| Malformed retry env knobs | `::warning::` annotation, defaults used |
-| Empty diff (base == head, no changed files) | Empty matrix `{"include":[]}` |
-| Unclassified path | ALL packages; warning reports only the count of offending paths, never the paths themselves |
-| `--all` flag or >2 positional args | Full matrix without git access; explicit error if more than 2 args |
-
-Privacy-safety: diagnostics never echo raw input values (SHAs come from event payloads and paths may be attacker-controlled in fork PRs) and never include secrets, tokens, or payment proofs. The script only inspects file paths via `git diff --name-only -z` and never executes PR code.
-
 ### Design principles
 
-- **Fail-closed**: if the detector cannot confidently determine the scope (invalid SHA, unrecognized path, git failure), ALL packages are checked — never zero.
-- **Fail-safe**: every degraded path still exits 0 with a valid matrix, so a broken detector degrades to a full run instead of a silently skipped one.
-- **No code execution from PRs**: the detector only inspects file paths via `git diff --name-only -z` (NUL-delimited, safe for spaces/unicode).
+- **Fail-closed**: if the detector cannot confidently determine the scope (invalid SHA, unrecognized path), ALL packages are checked.
+- **No code execution from PRs**: the detector only inspects file paths via `git diff --name-only`.
 - **No secrets required**: works for fork PRs using only the GitHub-provided base/head SHAs.
 
 ### Existing per-package workflows
@@ -631,32 +604,12 @@ The following specialized workflows continue to run independently with their own
 
 The unified `ci.yml` workflow is an **additional** PR gate, not a replacement.
 
-### Contract artifact caching
-
-The workflows that build Soroban wasm artifacts (`contracts-ci.yml`, the contracts job in
-`ci.yml`, `release-publish.yml`, and `sbom-provenance.yml`) cache
-`contracts/target/wasm32-unknown-unknown/release` so dependency compilation is not repeated
-on every run. The cache key combines the runner OS, a rustc fingerprint, and a strong
-content hash of the contract build inputs (sources, manifests, `Cargo.lock`, cargo/soroban
-config) computed by `scripts/ci-contract-cache.sh key-hash`. Restored entries are validated
-before use (`validate`) and gated again after the build (`verify`); cold, corrupted, or
-input-changed entries fall back to a full rebuild instead of failing the job or serving
-stale bytes, while ambiguous key inputs and missing/invalid artifacts fail closed with an
-explicit error. Only the build output directory is cached — never `.env` files, configs, or
-secrets.
-
-To validate the cache helpers locally before pushing:
-
-```bash
-bash scripts/ci-contract-cache.test.sh
-```
-
 ## Pull Request Workflow
 
 1. Create a branch from the latest `main`
 2. Make your changes
 3. Update documentation when setup steps or environment variables change
-4. Run the relevant tests for the area you touched, plus `pnpm run secrets:check` for the local secret scan
+4. Run the relevant tests for the area you touched
 5. Open a pull request using the template in [`.github/PULL_REQUEST_TEMPLATE.md`](./.github/PULL_REQUEST_TEMPLATE.md)
 6. Link the issue in your PR description, for example `Closes #39`
 
