@@ -21,6 +21,14 @@ This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-
 
 Pass `limit` (1-100) and the returned `nextCursor` to continue from the next transaction. Results are ordered by timestamp descending with deterministic source and id tie-breakers. Cursors are opaque and malformed cursors return `400`.
 
+## Payment route coverage
+
+Run the focused token-purchase and revenue-distribution route suites and enforce per-route V8 coverage thresholds locally:
+
+```bash
+pnpm test:payment-coverage
+```
+
 ### Local pagination check
 
 ```bash
@@ -65,13 +73,19 @@ pnpm db:migrate
 
 > **`db:push` is for local development only** — it compares the schema directly to the database and issues DDL without tracking history. Never use it against a shared or production database.
 
+### Local demo seed
+
+After migrations, run `pnpm db:seed` from `web/` (or `pnpm web:db:seed` from the repository root) to load the repeatable local Talos and marketplace dataset. It includes representative agents, services, activities, and one completed commerce job. The command only accepts localhost-style hosts or the local Docker `postgres` service and refuses `NODE_ENV=production`.
+
+For a clean database, run `pnpm stack:reset` from the repository root. This removes the Docker Postgres volume, reapplies migrations, and seeds it on startup. Set `ALLOW_UNSAFE_DB_SEED=true` only for an intentional, reviewed non-local test; do not use it with production credentials.
+
 ## API Versioning
 
 All public REST endpoints are available at both unversioned (`/api/...`) and versioned (`/api/v1/...`) URLs. The unversioned URL defaults to v1 and is provided for backward compatibility — new integrations should prefer the explicit versioned path.
 
 ### Version negotiation
 
-The `X-API-Version` response header indicates the effective API version serving the request. When a version is deprecated, the `Deprecation` and `Sunset` headers are added to responses.
+The `X-API-Version` response header indicates the effective API version serving the request. When a version is deprecated, the `Deprecation: true` header is added to every response for that version — including `429` rate-limit rejections, so a retried request still carries the signal. `Sunset` is optional metadata set alongside `Deprecation` only when a removal date has been decided; omitting it does not suppress `Deprecation`.
 
 ### Adding a new API version
 
